@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+# ROS setup files may read unset variables; keep error/pipe checks without nounset.
+set -Eeo pipefail
 
 WS="$HOME/tb_ws"
 
@@ -33,19 +34,31 @@ while true; do
   sleep 60
 done 2>/dev/null &
 SUDO_KEEPALIVE_PID=$!
+NEEDRESTART_CONF=""
 
 cleanup() {
+  if [[ -n "$NEEDRESTART_CONF" ]]; then
+    sudo rm -f -- "$NEEDRESTART_CONF" || true
+  fi
   kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# rosdep invokes sudo itself, which drops NEEDRESTART_MODE from the environment.
+# Temporarily defer service restarts to the final reboot for every apt invocation.
+sudo mkdir -p /etc/needrestart/conf.d
+NEEDRESTART_CONF="$(sudo mktemp /etc/needrestart/conf.d/zz-aa174-XXXXXX.conf)"
+echo '$nrconf{restart} = "l";' | sudo tee "$NEEDRESTART_CONF" >/dev/null
 
 apt_install() {
-  sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y "$@"
+  sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y "$@"
 }
 
 step "2/10  Updating Ubuntu"
 sudo apt-get update
-sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get upgrade -y
+sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get upgrade -y
 
 step "3/10  Installing Ubuntu Desktop and development tools"
 apt_install   ubuntu-desktop   git curl software-properties-common lsb-release wget gnupg   python3-dev python3-venv cmake build-essential   vim tmux htop gh
